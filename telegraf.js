@@ -69,9 +69,10 @@ class Telegraf extends Composer {
     return generateCallback(path, (update, res) => this.handleUpdate(update, res), debug)
   }
 
-  startPolling (timeout = 30, limit = 100, allowedUpdates, stopCallback = noop) {
+  startPolling (timeout = 30, limit = 100, allowedUpdates, stopCallback = noop, sync = true) {
     this.polling.timeout = timeout
     this.polling.limit = limit
+    this.sync = true;
     this.polling.allowedUpdates = allowedUpdates
       ? Array.isArray(allowedUpdates) ? allowedUpdates : [`${allowedUpdates}`]
       : null
@@ -148,11 +149,21 @@ class Telegraf extends Composer {
     })
   }
 
-  handleUpdates (updates) {
+  async handleUpdatesSync (updates) {
     if (!Array.isArray(updates)) {
       return Promise.reject(new Error('Updates must be an array'))
     }
-    const processAll = Promise.all(updates.map((update) => this.handleUpdate(update)))
+
+    for (const update of updates) {
+      await this.handleUpdate(update)
+    }
+  }
+
+  handleUpdatesAsync (updates) {
+    if (!Array.isArray(updates)) {
+      return Promise.reject(new Error('Updates must be an array'))
+    }
+    const processAll = awaitPromise.all(updates.map((update) => this.handleUpdate(update)))
     if (this.options.handlerTimeout === 0) {
       return processAll
     }
@@ -186,10 +197,17 @@ class Telegraf extends Composer {
         console.error(`Failed to fetch updates. Waiting: ${wait}s`, err.message)
         return new Promise((resolve) => setTimeout(resolve, wait * 1000, []))
       })
-      .then((updates) => this.polling.started
-        ? this.handleUpdates(updates).then(() => updates)
-        : []
-      )
+      .then((updates) => {
+        if (this.polling.started) {
+          if (this.sync) {
+            return this.handleUpdatesSync(updates).then(() => updates)
+          } else {
+            return this.handleUpdatesAsync(updates).then(() => updates)
+          }
+        } else {
+          return []
+        }
+      })
       .catch((err) => {
         console.error('Failed to process updates.', err)
         this.polling.started = false
@@ -226,4 +244,4 @@ module.exports.default = Object.assign(Telegraf, {
   Stage,
   BaseScene,
   session
-})
+});
